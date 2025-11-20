@@ -55,19 +55,19 @@ static void test_sysfs_toggle(int fd)
 #define STAGE_PRE_DEBUG_RESOURCES_DONE	1
 #define STAGE_DISCOVERY_DONE		2
 
-#define CREATE_VMS			(1 << 0)
-#define CREATE_EXEC_QUEUES		(1 << 1)
-#define VM_BIND				(1 << 2)
-#define VM_BIND_VM_DESTROY		(1 << 3)
-#define VM_BIND_EXTENDED		(1 << 4)
-#define VM_METADATA			(1 << 5)
-#define VM_BIND_METADATA		(1 << 6)
-#define VM_BIND_OP_MAP_USERPTR		(1 << 7)
-#define VM_BIND_DELAY_UFENCE_ACK	(1 << 8)
-#define VM_BIND_UFENCE_RECONNECT	(1 << 9)
-#define VM_BIND_UFENCE_SIGINT_CLIENT	(1 << 10)
-#define TEST_FAULTABLE			(1 << 30)
-#define TEST_DISCOVERY			(1 << 31)
+#define CREATE_VMS			BIT(0)
+#define CREATE_EXEC_QUEUES		BIT(1)
+#define VM_BIND				BIT(2)
+#define VM_BIND_VM_DESTROY		BIT(3)
+#define VM_BIND_EXTENDED		BIT(4)
+#define VM_METADATA			BIT(5)
+#define VM_BIND_METADATA		BIT(6)
+#define VM_BIND_OP_MAP_USERPTR		BIT(7)
+#define VM_BIND_DELAY_UFENCE_ACK	BIT(8)
+#define VM_BIND_UFENCE_RECONNECT	BIT(9)
+#define VM_BIND_UFENCE_SIGINT_CLIENT	BIT(10)
+#define TEST_FAULTABLE			BIT(30)
+#define TEST_DISCOVERY			BIT(31)
 
 #define PAGE_SIZE SZ_4K
 #define MDATA_SIZE (PRELIM_WORK_IN_PROGRESS_DRM_XE_DEBUG_METADATA_NUM * PAGE_SIZE)
@@ -434,7 +434,7 @@ static void run_basic_client(struct xe_eudebug_client *c)
 	fd = xe_eudebug_client_open_driver(c);
 
 	if (c->flags & CREATE_VMS) {
-		const uint32_t flags[] = {
+		const uint64_t flags[] = {
 			DRM_XE_VM_CREATE_FLAG_SCRATCH_PAGE | DRM_XE_VM_CREATE_FLAG_LR_MODE,
 			DRM_XE_VM_CREATE_FLAG_LR_MODE,
 		};
@@ -949,7 +949,7 @@ static void test_read_event(int fd)
  *	Each process opens and closes xe drm client and creates few resources.
  */
 
-static void test_basic_sessions(int fd, unsigned int flags, int count, bool match_opposite)
+static void test_basic_sessions(int fd, uint64_t flags, int count, bool match_opposite)
 {
 	struct xe_eudebug_session **s;
 	int i;
@@ -998,7 +998,7 @@ static void test_basic_sessions(int fd, unsigned int flags, int count, bool matc
  *	partial unbind, and unbind all operations before attaching. Ensure that
  *	we get a only a singe 'VM_BIND' event from the discovery worker.
  */
-static void test_basic_discovery(int fd, unsigned int flags, bool match_opposite)
+static void test_basic_discovery(int fd, uint64_t flags, bool match_opposite)
 {
 	struct xe_eudebug_debugger *d;
 	struct xe_eudebug_session *s;
@@ -1239,7 +1239,7 @@ static void *discovery_race_thread(void *data)
 	return NULL;
 }
 
-static void test_race_discovery(int fd, unsigned int flags, int clients)
+static void test_race_discovery(int fd, uint64_t flags, int clients)
 {
 	const int debuggers_per_client = 3;
 	int count = clients * debuggers_per_client;
@@ -1325,7 +1325,7 @@ static void *attach_dettach_thread(void *data)
 	return NULL;
 }
 
-static void test_empty_discovery(int fd, unsigned int flags, int clients)
+static void test_empty_discovery(int fd, uint64_t flags, int clients)
 {
 	struct xe_eudebug_session **s;
 	pthread_t *threads;
@@ -1377,7 +1377,7 @@ static void ufence_ack_trigger(struct xe_eudebug_debugger *d,
 
 typedef void (*client_run_t)(struct xe_eudebug_client *);
 
-static void test_client_with_trigger(int fd, unsigned int flags, int count,
+static void test_client_with_trigger(int fd, uint64_t flags, int count,
 				     client_run_t client_fn, int type,
 				     xe_eudebug_trigger_fn trigger_fn,
 				     struct drm_xe_engine_class_instance *hwe,
@@ -1471,7 +1471,7 @@ static void run_basic_client_th(struct xe_eudebug_client *c)
 	free(threads);
 }
 
-static void test_basic_sessions_th(int fd, unsigned int flags, int num_clients, bool match_opposite)
+static void test_basic_sessions_th(int fd, uint64_t flags, int num_clients, bool match_opposite)
 {
 	test_client_with_trigger(fd, flags, num_clients, run_basic_client_th, 0, NULL, NULL,
 				 match_opposite, 0);
@@ -1623,7 +1623,7 @@ static void vm_trigger(struct xe_eudebug_debugger *d,
  * Description:
  *      Fault variation of test basic-vm-access-userptr.
  */
-static void test_vm_access(int fd, unsigned int flags, int num_clients)
+static void test_vm_access(int fd, uint64_t flags, int num_clients)
 {
 	struct drm_xe_engine_class_instance *hwe;
 
@@ -1785,7 +1785,7 @@ static void vm_trigger_access_parameters(struct xe_eudebug_debugger *d,
  * Description:
  *      Fault variation of test basic-vm-access-parameters-userptr.
  */
-static void test_vm_access_parameters(int fd, unsigned int flags, int num_clients)
+static void test_vm_access_parameters(int fd, uint64_t flags, int num_clients)
 {
 	struct drm_xe_engine_class_instance *hwe;
 
@@ -1914,7 +1914,7 @@ static void metadata_read_on_vm_bind_trigger(struct xe_eudebug_debugger *d,
  * Description:
  *      Exercise PRELIM_DRM_XE_EUDEBUG_IOCTL_READ_METADATA and debug metadata create|destroy events.
  */
-static void test_metadata_read(int fd, unsigned int flags, int num_clients)
+static void test_metadata_read(int fd, uint64_t flags, int num_clients)
 {
 	test_client_with_trigger(fd, flags, num_clients, metadata_access_client,
 				 PRELIM_DRM_XE_EUDEBUG_EVENT_METADATA, metadata_read_trigger,
@@ -1927,7 +1927,7 @@ static void test_metadata_read(int fd, unsigned int flags, int num_clients)
  * Description:
  *      Read debug metadata when vm_bind has it attached.
  */
-static void test_metadata_attach(int fd, unsigned int flags, int num_clients)
+static void test_metadata_attach(int fd, uint64_t flags, int num_clients)
 {
 	test_client_with_trigger(fd, flags, num_clients, metadata_access_client,
 				 PRELIM_DRM_XE_EUDEBUG_EVENT_VM_BIND_OP_METADATA,
@@ -2160,7 +2160,7 @@ static int wait_for_ufence_events(struct ufence_priv *priv, int timeout_ms)
  * Description:
  *	Give user fence in application, hold it, send SIGINT to client and check if anything breaks.
  */
-static void test_basic_ufence(int fd, unsigned int flags)
+static void test_basic_ufence(int fd, uint64_t flags)
 {
 	struct xe_eudebug_debugger *d;
 	struct xe_eudebug_session *s;
@@ -2566,7 +2566,7 @@ ack_ufence:
  * Description:
  *      Fault variation of test vm-bind-clear.
  */
-static void test_vm_bind_clear(int fd, uint32_t flags)
+static void test_vm_bind_clear(int fd, uint64_t flags)
 {
 	struct vm_bind_clear_priv *priv;
 	struct xe_eudebug_session *s;
@@ -2794,7 +2794,7 @@ static void vma_ufence_trigger(struct xe_eudebug_debugger *d,
  * Description:
  *      Fault variation of test vma-ufence.
  */
-static void test_vma_ufence(int fd, unsigned int flags)
+static void test_vma_ufence(int fd, uint64_t flags)
 {
 	struct xe_eudebug_session *s;
 	struct ufence_priv *priv;
@@ -2927,7 +2927,6 @@ int igt_main()
 
 	igt_subtest("basic-client-th")
 		test_basic_sessions_th(fd, 0, 1, true);
-
 
 	igt_subtest_group() {
 		uint32_t flags[] = {0, TEST_FAULTABLE};
