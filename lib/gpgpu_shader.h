@@ -40,6 +40,7 @@ struct gpgpu_shader {
 	uint32_t simd_size;
 	bool hw_local_id_generation;
 	enum gpgpu_shader_vrt_modes vrt;
+	bool bb_sync;
 };
 
 struct iga64_template {
