@@ -1124,6 +1124,7 @@ static void *discovery_race_thread(void *data)
 	} clients[RESOURCE_COUNT];
 	struct xe_eudebug_session *s = data;
 	int expected = RESOURCE_COUNT * (1 + 2 * RESOURCE_COUNT);
+	uint64_t flags = s->debugger->flags;
 	const int tries = 100;
 	bool done = false;
 	int ret = 0;
@@ -1219,7 +1220,7 @@ static void *discovery_race_thread(void *data)
 	}
 
 	/* Primary thread must read everything */
-	if (s->flags & PRIMARY_THREAD) {
+	if (flags & PRIMARY_THREAD) {
 		while ((ret = xe_eudebug_debugger_attach(s->debugger, s->client)) == -EBUSY)
 			usleep(100000);
 
@@ -1257,12 +1258,12 @@ static void test_race_discovery(int fd, unsigned int flags, int clients)
 			s = &sessions[i * debuggers_per_client + j];
 			s->client = c;
 			s->debugger = xe_eudebug_debugger_create(fd, flags, NULL);
-			s->flags = flags | (!j ? PRIMARY_THREAD : 0);
+			s->debugger->flags = flags | (!j ? PRIMARY_THREAD : 0);
 		}
 	}
 
 	for (i = 0; i < count; i++) {
-		if (sessions[i].flags & PRIMARY_THREAD)
+		if (sessions[i].debugger->flags & PRIMARY_THREAD)
 			xe_eudebug_client_start(sessions[i].client);
 
 		pthread_create(&threads[i], NULL, discovery_race_thread, &sessions[i]);
@@ -1281,7 +1282,7 @@ static void test_race_discovery(int fd, unsigned int flags, int clients)
 	}
 
 	for (i = count - 1; i > 0; i--) {
-		if (sessions[i].flags & PRIMARY_THREAD) {
+		if (sessions[i].debugger->flags & PRIMARY_THREAD) {
 			igt_assert_eq(sessions[i].client->seqno - 1,
 				      sessions[i].debugger->event_count);
 

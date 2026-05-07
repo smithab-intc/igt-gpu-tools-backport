@@ -717,14 +717,6 @@ static void eu_attention_resume_trigger(struct xe_eudebug_debugger *d,
 	if (data->last_eu_control_seqno > att->base.seqno)
 		return;
 
-	pthread_mutex_lock(&data->mutex);
-	if (igt_nsec_elapsed(&data->exception_arrived) < (MAX_PREEMPT_TIMEOUT + 1) * NSEC_PER_SEC &&
-	    data->flags & TRIGGER_RESUME_DELAYED) {
-		pthread_mutex_unlock(&data->mutex);
-		return;
-	}
-	pthread_mutex_unlock(&data->mutex);
-
 	bitmask = calloc(1, att->bitmask_size);
 	igt_assert(bitmask);
 
@@ -733,13 +725,18 @@ static void eu_attention_resume_trigger(struct xe_eudebug_debugger *d,
 	igt_assert(bitmask_size == att->bitmask_size);
 
 	/* No guarantee that all pagefaulting eu threads will raise attention */
-	if (!(d->flags & SHADER_PAGEFAULT))
+	if (!(data->flags & SHADER_PAGEFAULT))
 		igt_assert(memcmp(bitmask, att->bitmask, att->bitmask_size) == 0);
 
 	pthread_mutex_lock(&data->mutex);
-	if (d->flags & TRIGGER_RESUME_ONE) {
+	if (igt_nsec_elapsed(&data->exception_arrived) < (MAX_PREEMPT_TIMEOUT + 1) * NSEC_PER_SEC &&
+	    data->flags & TRIGGER_RESUME_DELAYED) {
+		pthread_mutex_unlock(&data->mutex);
+		free(bitmask);
+		return;
+	} else if (data->flags & TRIGGER_RESUME_ONE) {
 		only_first_set_bit(bitmask, bitmask, bitmask_size);
-	} else if (d->flags & TRIGGER_RESUME_DSS) {
+	} else if (data->flags & TRIGGER_RESUME_DSS) {
 		uint64_t *event = (uint64_t *)att->bitmask;
 		uint64_t *resume = (uint64_t *)bitmask;
 
@@ -751,7 +748,7 @@ static void eu_attention_resume_trigger(struct xe_eudebug_debugger *d,
 			resume[i] = event[i];
 			break;
 		}
-	} else if (d->flags & TRIGGER_RESUME_SET_BP) {
+	} else if (data->flags & TRIGGER_RESUME_SET_BP) {
 		if (!set_breakpoint_once(d, data)) {
 			/* breakpoint already set, check if the first thread managed to hit it */
 			uint32_t expected, aip;
@@ -768,7 +765,7 @@ static void eu_attention_resume_trigger(struct xe_eudebug_debugger *d,
 		}
 	}
 
-	if (d->flags & (SHADER_LOOP | SHADER_PAGEFAULT)) {
+	if (data->flags & (SHADER_LOOP | SHADER_PAGEFAULT)) {
 		uint32_t threads = data->thread_count;
 		uint32_t val = STEERING_END_LOOP;
 
@@ -800,7 +797,7 @@ static void eu_attention_resume_single_step_trigger(struct xe_eudebug_debugger *
 	if (data->last_eu_control_seqno > att->base.seqno)
 		return;
 
-	if (d->flags & TRIGGER_RESUME_PARALLEL_WALK) {
+	if (data->flags & TRIGGER_RESUME_PARALLEL_WALK) {
 		if (data->stepped_threads_count != -1)
 			if (data->steps_done < SINGLE_STEP_COUNT) {
 				int stepped_threads_count_after_resume =
@@ -825,7 +822,7 @@ static void eu_attention_resume_single_step_trigger(struct xe_eudebug_debugger *
 
 		val = data->steps_done < SINGLE_STEP_COUNT ? STEERING_SINGLE_STEP :
 							     STEERING_CONTINUE;
-	} else if (d->flags & TRIGGER_RESUME_SINGLE_WALK) {
+	} else if (data->flags & TRIGGER_RESUME_SINGLE_WALK) {
 		if (data->stepped_threads_count != -1)
 			if (data->steps_done < 2) {
 				int stepped_threads_count_after_resume =
@@ -1026,7 +1023,7 @@ static void eu_attention_resume_caching_trigger(struct xe_eudebug_debugger *d,
 	struct gpgpu_shader *shader_preamble;
 	struct gpgpu_shader *shader_write_instr;
 	const unsigned int instruction_count =
-			caching_get_instruction_count(d->master_fd, s_dim.x, d->flags);
+			caching_get_instruction_count(d->master_fd, s_dim.x, data->flags);
 	uint64_t seqno = 0;
 	int ret;
 
@@ -1155,7 +1152,7 @@ static void run_online_client(struct xe_eudebug_client *c)
 		.instances = to_user_pointer(&hwe),
 		.width = 1,
 		.num_placements = 1,
-		.extensions = c->flags & DISABLE_DEBUG_MODE ? 0 : to_user_pointer(&ext)
+		.extensions = data->flags & DISABLE_DEBUG_MODE ? 0 : to_user_pointer(&ext)
 	};
 	struct dim_t w_dim;
 	struct dim_t s_dim;
@@ -1183,13 +1180,13 @@ static void run_online_client(struct xe_eudebug_client *c)
 	bb_size = get_bb_size(fd, shader);
 
 	/* Additional memory for steering control */
-	if (c->flags & SHADER_LOOP || c->flags & SHADER_SINGLE_STEP || c->flags & SHADER_PAGEFAULT)
+	if (data->flags & SHADER_LOOP || data->flags & SHADER_SINGLE_STEP || data->flags & SHADER_PAGEFAULT)
 		s_dim.y++;
 	/* Additional memory for caching check */
-	if ((c->flags & SHADER_CACHING_SRAM) || (c->flags & SHADER_CACHING_VRAM))
-		s_dim.y += caching_get_instruction_count(fd, s_dim.x, c->flags);
+	if ((data->flags & SHADER_CACHING_SRAM) || (data->flags & SHADER_CACHING_VRAM))
+		s_dim.y += caching_get_instruction_count(fd, s_dim.x, data->flags);
 	buf = create_uc_buf(fd, s_dim.x, s_dim.y,
-			    get_memory_region(fd, c->flags, TARGET_REGION_BITMASK));
+			    get_memory_region(fd, data->flags, TARGET_REGION_BITMASK));
 
 	buf->addr.offset = target_offset;
 
@@ -1204,7 +1201,7 @@ static void run_online_client(struct xe_eudebug_client *c)
 							   2 * sizeof(**metadata), metadata[1]);
 
 	vm_flags = DRM_XE_VM_CREATE_FLAG_LR_MODE;
-	vm_flags |= c->flags & (SHADER_PAGEFAULT | FAULTABLE_VM) ?
+	vm_flags |= data->flags & (SHADER_PAGEFAULT | FAULTABLE_VM) ?
 			DRM_XE_VM_CREATE_FLAG_FAULT_MODE : 0;
 
 	create.vm_id = xe_eudebug_client_vm_create(c, fd, vm_flags, 0);
@@ -1212,7 +1209,7 @@ static void run_online_client(struct xe_eudebug_client *c)
 	xe_eudebug_client_exec_queue_create(c, fd, &create);
 
 	ibb = xe_bb_create_on_offset(fd, create.exec_queue_id, create.vm_id, bb_offset, bb_size,
-				     get_memory_region(fd, c->flags, BB_REGION_BITMASK));
+				     get_memory_region(fd, data->flags, BB_REGION_BITMASK));
 	intel_bb_set_lr_mode(ibb, true);
 
 	sip = get_sip(data);
@@ -1225,19 +1222,19 @@ static void run_online_client(struct xe_eudebug_client *c)
 
 	intel_bb_sync(ibb);
 
-	if (c->flags & TRIGGER_RECONNECT)
+	if (data->flags & TRIGGER_RECONNECT)
 		xe_eudebug_client_wait_stage(c, DEBUGGER_REATTACHED);
 	else
 		/* Make sure it wasn't the timeout. */
 		igt_assert_lt_u64(igt_nsec_elapsed(&ts), c->timeout_ms * NSEC_PER_MSEC);
 
-	if (!(c->flags & DO_NOT_EXPECT_CANARIES)) {
+	if (!(data->flags & DO_NOT_EXPECT_CANARIES)) {
 		ptr = xe_bo_mmap_ext(fd, buf->handle, buf->size, PROT_READ);
 		data->thread_hit_count = count_canaries_neq(ptr, w_dim, 0);
 		igt_assert_f(data->thread_hit_count, "No canaries found, nothing executed?\n");
 
-		if ((c->flags & SHADER_BREAKPOINT || c->flags & TRIGGER_RESUME_SET_BP ||
-		     c->flags & SHADER_N_NOOP_BREAKPOINT) && !(c->flags & DISABLE_DEBUG_MODE)) {
+		if ((data->flags & SHADER_BREAKPOINT || data->flags & TRIGGER_RESUME_SET_BP ||
+		     data->flags & SHADER_N_NOOP_BREAKPOINT) && !(data->flags & DISABLE_DEBUG_MODE)) {
 			uint32_t aip = ptr[0];
 
 			igt_assert_f(aip != SHADER_CANARY,
@@ -1381,13 +1378,14 @@ match_attention_with_exec_queue(struct xe_eudebug_event_log *log,
 	return NULL;
 }
 
-static void online_session_check(struct xe_eudebug_session *s, int flags)
+static void online_session_check(struct xe_eudebug_session *s)
 {
 	struct prelim_drm_xe_eudebug_event_eu_attention *ea = NULL;
 	struct prelim_drm_xe_eudebug_event_pagefault *pf = NULL;
 	struct prelim_drm_xe_eudebug_event_eu_attention *prev_ea = NULL;
 	struct prelim_drm_xe_eudebug_event *event = NULL;
 	struct online_debug_data *data = s->client->ptr;
+	uint64_t flags = data->flags;
 	bool expect_exception = flags & DISABLE_DEBUG_MODE ? false : true;
 	int sum = 0;
 	int bitmask_size;
@@ -1615,7 +1613,7 @@ static void test_basic_online(int fd, struct drm_xe_engine_class_instance *hwe, 
 					ufence_ack_trigger);
 
 	xe_eudebug_session_run(s);
-	online_session_check(s, s->flags);
+	online_session_check(s);
 
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
@@ -1655,7 +1653,7 @@ static void test_set_breakpoint_online(int fd, struct drm_xe_engine_class_instan
 					eu_attention_resume_trigger);
 
 	xe_eudebug_session_run(s);
-	online_session_check(s, s->flags);
+	online_session_check(s);
 
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
@@ -1851,7 +1849,7 @@ static void test_pagefault_online(int fd, struct drm_xe_engine_class_instance *h
 					pagefault_trigger);
 
 	xe_eudebug_session_run(s);
-	online_session_check(s, s->flags);
+	online_session_check(s);
 
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
@@ -1935,7 +1933,7 @@ static void test_reset_with_attention_online(int fd, struct drm_xe_engine_class_
 
 	xe_eudebug_session_run(s2);
 
-	online_session_check(s2, s2->flags);
+	online_session_check(s2);
 
 	xe_eudebug_session_destroy(s2);
 	online_debug_data_destroy(data);
@@ -2006,7 +2004,7 @@ static void test_interrupt_all(int fd, struct drm_xe_engine_class_instance *hwe,
 	xe_eudebug_event_log_print(s->debugger->log, true);
 	xe_eudebug_event_log_print(s->client->log, true);
 
-	online_session_check(s, s->flags);
+	online_session_check(s);
 
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
@@ -2221,7 +2219,7 @@ static void test_tdctl_parameters(int fd, struct drm_xe_engine_class_instance *h
 	xe_eudebug_event_log_print(s->debugger->log, true);
 	xe_eudebug_event_log_print(s->client->log, true);
 
-	online_session_check(s, s->flags);
+	online_session_check(s);
 
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
@@ -2242,7 +2240,7 @@ static void eu_attention_debugger_detach_trigger(struct xe_eudebug_debugger *d,
 	xe_eudebug_debugger_detach(d);
 
 	/* Let the KMD scan function notice unhandled EU attention */
-	if (!(d->flags & SHADER_N_NOOP_BREAKPOINT))
+	if (!(data->flags & SHADER_N_NOOP_BREAKPOINT))
 		sleep(1);
 
 	/*
@@ -2278,7 +2276,7 @@ static void eu_attention_debugger_detach_trigger(struct xe_eudebug_debugger *d,
 	/* Let the discovery worker discover resources */
 	sleep(2);
 
-	if (!(d->flags & SHADER_N_NOOP_BREAKPOINT))
+	if (!(data->flags & SHADER_N_NOOP_BREAKPOINT))
 		xe_eudebug_debugger_signal_stage(d, DEBUGGER_REATTACHED);
 }
 
@@ -2383,7 +2381,7 @@ static void test_single_step(int fd, struct drm_xe_engine_class_instance *hwe, i
 					ufence_ack_trigger);
 
 	xe_eudebug_session_run(s);
-	online_session_check(s, s->flags);
+	online_session_check(s);
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
 }
@@ -2475,7 +2473,6 @@ static void test_caching(int fd, struct drm_xe_engine_class_instance *hwe, int f
 
 	s->client = xe_eudebug_client_create_timeout(fd, run_online_client, flags, data, XE_EUDEBUG_DEFAULT_CACHING_TIMEOUT_SEC);
 	s->debugger = xe_eudebug_debugger_create(fd, flags, data);
-	s->flags = flags;
 
 	xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_OPEN,
 					open_trigger);
@@ -2490,7 +2487,7 @@ static void test_caching(int fd, struct drm_xe_engine_class_instance *hwe, int f
 					ufence_ack_trigger);
 
 	xe_eudebug_session_run(s);
-	online_session_check(s, s->flags);
+	online_session_check(s);
 	xe_eudebug_session_destroy(s);
 	online_debug_data_destroy(data);
 }
@@ -2672,7 +2669,7 @@ static void test_many_sessions_on_tiles(int fd, bool multi_tile)
 		xe_eudebug_debugger_stop_worker(s[i]->debugger);
 
 		xe_eudebug_event_log_print(s[i]->debugger->log, true);
-		online_session_check(s[i], flags);
+		online_session_check(s[i]);
 
 		xe_eudebug_session_destroy(s[i]);
 		online_debug_data_destroy(data[i]);
