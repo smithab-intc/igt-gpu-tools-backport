@@ -176,6 +176,11 @@ struct online_debug_data {
 	int num_threads_per_eu;
 	int max_subslices_per_slice;
 	struct dim_t w_dim;
+	enum {
+		STEERING_CONTROL_NONE,
+		STEERING_CONTROL_LOOP,
+		STEERING_CONTROL_END_LOOP,
+	} steering_control;
 };
 
 static int get_number_of_threads(struct online_debug_data *data)
@@ -739,6 +744,25 @@ static void save_first_exception_trigger(struct xe_eudebug_debugger *d,
 		data->exception_event = igt_memdup(e, e->len);
 	}
 	pthread_mutex_unlock(&data->mutex);
+}
+
+static int wait_for_exception(struct online_debug_data *data, int timeout)
+{
+	int ret = -ETIMEDOUT;
+
+	igt_for_milliseconds(timeout) {
+		pthread_mutex_lock(&data->mutex);
+		if ((data->exception_arrived.tv_sec |
+		     data->exception_arrived.tv_nsec) != 0)
+			ret = 0;
+		pthread_mutex_unlock(&data->mutex);
+
+		if (!ret)
+			break;
+		usleep(1000);
+	}
+
+	return ret;
 }
 
 #define MAX_PREEMPT_TIMEOUT 10ull
@@ -1319,10 +1343,31 @@ static void run_online_client(struct xe_eudebug_client *c)
 	sip = get_sip(data);
 
 	igt_nsec_elapsed(&ts);
+
+	if (data->steering_control == STEERING_CONTROL_LOOP)
+		shader->bb_sync = false;
+
 	gpgpu_shader_exec(ibb, buf, w_dim.x, w_dim.y, shader, sip, 0, 0);
 
 	gpgpu_shader_destroy(sip);
 	gpgpu_shader_destroy(shader);
+
+	if (data->steering_control == STEERING_CONTROL_LOOP) {
+		uint32_t *steering;
+		bool end_loop;
+
+		do {
+			usleep(10000);
+			pthread_mutex_lock(&data->mutex);
+			end_loop = data->steering_control == STEERING_CONTROL_END_LOOP;
+			pthread_mutex_unlock(&data->mutex);
+		} while (!end_loop);
+
+		ptr = xe_bo_mmap_ext(fd, buf->handle, buf->size, PROT_WRITE);
+		steering = ptr + steering_offset(data->thread_count) / sizeof(*ptr);
+		*steering = STEERING_END_LOOP;
+		munmap(ptr, buf->size);
+	}
 
 	intel_bb_sync(ibb);
 
@@ -2177,11 +2222,26 @@ static void test_interrupt_other(int fd, struct drm_xe_engine_class_instance *hw
 	int debugee_flags = SHADER_LOOP | DO_NOT_EXPECT_CANARIES;
 
 	data = online_debug_data_create(fd, hwe, flags);
+
+	if (intel_gen_per_context_eudebug(fd))
+		data->steering_control = STEERING_CONTROL_LOOP;
+
 	s = xe_eudebug_session_create(fd, run_online_client, flags, data);
 
 	xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_OPEN, open_trigger);
 	xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_EXEC_QUEUE,
 					exec_queue_trigger);
+
+	if (intel_gen_per_context_eudebug(fd)) {
+		/* Per context debug */
+		xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_SYNC_HOST,
+						sync_host_debug_trigger);
+		xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_SYNC_HOST,
+						sync_host_resume_trigger);
+		xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_SYNC_HOST,
+						save_first_exception_trigger);
+	}
+
 	xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_VM, vm_open_trigger);
 	xe_eudebug_debugger_add_trigger(s->debugger, PRELIM_DRM_XE_EUDEBUG_EVENT_METADATA,
 					create_metadata_trigger);
@@ -2208,20 +2268,33 @@ static void test_interrupt_other(int fd, struct drm_xe_engine_class_instance *hw
 			continue;
 	}
 
-	pthread_mutex_lock(&debugee_data->mutex);
-	igt_assert(debugee_data->client_handle != -1);
-	igt_assert(debugee_data->exec_queue_handle != -1);
+	if (intel_gen_per_context_eudebug(fd)) {
+		int ret;
 
-	/*
-	 * Interrupting the other client should return invalid state
-	 * as it is running in runalone mode
-	 */
-	igt_assert_eq(__eu_ctl(s->debugger->fd, debugee_data->client_handle,
-		      debugee_data->exec_queue_handle, debugee_data->lrc_handle, NULL, 0,
-		      PRELIM_DRM_XE_EUDEBUG_EU_CONTROL_CMD_INTERRUPT_ALL, NULL), -EINVAL);
-	pthread_mutex_unlock(&debugee_data->mutex);
+		eu_ctl(s->debugger->fd, debugee_data->client_handle,
+		       debugee_data->exec_queue_handle, debugee_data->lrc_handle, NULL, 0,
+		       PRELIM_DRM_XE_EUDEBUG_EU_CONTROL_CMD_INTERRUPT_ALL);
+		ret = wait_for_exception(data, STARTUP_TIMEOUT_MS);
+		pthread_mutex_lock(&data->mutex);
+		data->steering_control = STEERING_CONTROL_END_LOOP;
+		pthread_mutex_unlock(&data->mutex);
+		igt_assert_f(ret, "Exception arrived for wrong context.\n");
+	} else {
+		pthread_mutex_lock(&debugee_data->mutex);
+		igt_assert(debugee_data->client_handle != -1);
+		igt_assert(debugee_data->exec_queue_handle != -1);
 
-	xe_force_gt_reset_async(s->debugger->master_fd, debugee_data->hwe.gt_id);
+		/*
+		 * Interrupting the other client should return invalid state
+		 * as it is running in runalone mode
+		 */
+		igt_assert_eq(__eu_ctl(s->debugger->fd, debugee_data->client_handle,
+			      debugee_data->exec_queue_handle, debugee_data->lrc_handle, NULL, 0,
+			      PRELIM_DRM_XE_EUDEBUG_EU_CONTROL_CMD_INTERRUPT_ALL, NULL), -EINVAL);
+		pthread_mutex_unlock(&debugee_data->mutex);
+
+		xe_force_gt_reset_async(s->debugger->master_fd, debugee_data->hwe.gt_id);
+	}
 
 	/* First client should complete because of the reset */
 	xe_eudebug_client_wait_done(s->client);
