@@ -1066,18 +1066,16 @@ bool xe_is_main_gt(int fd, int gt)
  * @fd: xe device fd
  * @gt: gt id
  *
- * Returns tile id for given @gt.
+ * Returns tile id for given @gt, or -ENOENT if GT ID cannot be found.
  */
 uint16_t xe_gt_get_tile_id(int fd, int gt)
 {
 	struct xe_device *xe_dev;
 
 	xe_dev = find_in_cache(fd);
-
 	igt_assert(xe_dev);
-	igt_assert(gt < xe_number_gt(fd));
 
-	return xe_dev->gt_list->gt_list[gt].tile_id;
+	return xe_get_tile(xe_dev, gt);
 }
 
 /**
