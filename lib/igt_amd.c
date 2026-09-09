@@ -836,10 +836,8 @@ void igt_amd_read_link_settings(
 	static const char * const labels[] = {
 		"Current:", "Verified:", "Reported:", "Preferred:"
 	};
-	int fd, ret;
+	int fd, ret, i;
 	char buf[101];
-	char *ptr;
-	int i;
 
 	fd = igt_debugfs_connector_dir(drm_fd, connector_name, O_RDONLY);
 	if (fd < 0) {
@@ -853,22 +851,29 @@ void igt_amd_read_link_settings(
 
 	close(fd);
 
-	/* The debugfs node returns a single NUL-terminated string of the form:
+	/* The debugfs node returns a string of the form:
 	 *   "Current:  %d  0x%x  %d  Verified:  %d  0x%x  %d  "
 	 *   "Reported:  %d  0x%x  %d  Preferred:  %d  0x%x  %d\n"
-	 * Locate each label and parse the three values that follow it. Do not
-	 * rely on embedded NUL bytes (or any other delimiter) between records,
-	 * as the kernel emits a single contiguous string. */
-	ptr = buf;
-	for (i = 0; i < 4; i++) {
-		ptr = strstr(ptr, labels[i]);
-		if (ptr == NULL)
+	 * Old kernels embed NUL bytes between records; new kernels emit a
+	 * contiguous string. Use memmem() to locate each label across NUL
+	 * boundaries and sscanf() to parse values, so both layouts work.
+	 */
+	for (i = 0; i < ARRAY_SIZE(labels); i++) {
+		const char *label = labels[i];
+		char *rec = memmem(buf, ret, label, strlen(label));
+		unsigned int rate;
+		int lanes, spread;
+
+		if (!rec)
 			break;
 
-		ptr += strlen(labels[i]);
-		lane_count[i] = strtol(ptr, &ptr, 10);
-		link_rate[i] = strtol(ptr, &ptr, 16);
-		link_spread[i] = strtol(ptr, &ptr, 10);
+		if (sscanf(rec + strlen(label), "%d %x %d",
+			   &lanes, &rate, &spread) != 3)
+			break;
+
+		lane_count[i] = lanes;
+		link_rate[i] = rate;
+		link_spread[i] = spread;
 	}
 }
 
