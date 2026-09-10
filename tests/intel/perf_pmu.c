@@ -1766,6 +1766,7 @@ test_rc6(int gem_fd, unsigned int gt, unsigned int num_gt, unsigned int flags)
 					    ts[1] - ts[0],
 					    tolerance, drpc);
 		free(drpc);
+		drpc = NULL;
 	}
 
 	if (flags & TEST_S3) {
@@ -1806,6 +1807,7 @@ test_rc6(int gem_fd, unsigned int gt, unsigned int num_gt, unsigned int flags)
 					    ts[1] - ts[0],
 					    tolerance, drpc);
 		free(drpc);
+		drpc = NULL;
 	}
 
 	/* Wake up device and check no RC6. */
@@ -1847,6 +1849,7 @@ test_rc6(int gem_fd, unsigned int gt, unsigned int num_gt, unsigned int flags)
 						    ts[1] - ts[0],
 						    tolerance, drpc);
 		free(drpc);
+		drpc = NULL;
 	}
 }
 
