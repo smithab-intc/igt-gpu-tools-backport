@@ -31,6 +31,8 @@ static inline s64 sign_extend64(u64 value, int index)
 	((~0ULL - (1ULL << (l)) + 1) & \
 	(~0ULL >> (BITS_PER_LONG_LONG - 1 - (h))))
 
+#define __GENMASK GENMASK
+
 #define BITS_PER_BYTE 8
 #define BITS_PER_TYPE(t) (sizeof(t) * BITS_PER_BYTE)
 #define BITS_PER_LONG BITS_PER_TYPE(long)
