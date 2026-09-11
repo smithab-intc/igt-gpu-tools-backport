@@ -29,7 +29,7 @@
 #define AMDGPU_DEBUG_ENABLE_CE_CS 0x400
 
 /* Returns true if kernel allows CE CS (amdgpu debug_mask has bit 0x400 set). */
-static bool amdgpu_ce_cs_enabled(void)
+bool amdgpu_ce_cs_enabled(void)
 {
 	FILE *f;
 	unsigned int mask = 0;

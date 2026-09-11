@@ -32,4 +32,7 @@ void amdgpu_command_submission_gfx_separate_ibs(amdgpu_device_handle device);
 
 void amdgpu_command_submission_gfx_shared_ib(amdgpu_device_handle device);
 
+/* Returns true if kernel allows CE CS (amdgpu debug_mask has bit 0x400 set). */
+bool amdgpu_ce_cs_enabled(void);
+
 #endif

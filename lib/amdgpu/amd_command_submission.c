@@ -10,6 +10,7 @@
 #include "lib/amdgpu/amd_sdma.h"
 #include "lib/amdgpu/amd_PM4.h"
 #include "lib/amdgpu/amd_command_submission.h"
+#include "lib/amdgpu/amd_gfx.h"
 #include "lib/amdgpu/amdgpu_asic_addr.h"
 
 #include "ioctl_wrappers.h"
@@ -804,6 +805,9 @@ amdgpu_command_ce_write_fence(amdgpu_device_handle dev,
 	struct amdgpu_cmd_base *base = get_cmd_base();
 	const struct amdgpu_ip_block_version *ip_block =
 		get_ip_block(dev, AMD_IP_GFX);
+
+	igt_require_f(amdgpu_ce_cs_enabled(),
+		      "CE CS blocked; reload amdgpu with debug_mask=0x400 to enable\n");
 
 	/* destination buffer */
 	r = amdgpu_bo_alloc_and_map(dev, 4096, 4096,
