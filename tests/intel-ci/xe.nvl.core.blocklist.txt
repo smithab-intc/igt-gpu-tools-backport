@@ -112,3 +112,8 @@ igt@xe_live_ktest@xe_eudebug
 igt@xe_mempage_offline@inject-single-page
 igt@xe_mempage_offline@inject-duplicate-page
 ##################################################################
+# Expected skip on NVL due to unsupported multi-queue capability
+# Multi-queue is not supported on platforms older than xe3p
+##################################################################
+igt@.*multi.queue.*
+##################################################################
