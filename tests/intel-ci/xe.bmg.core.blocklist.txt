@@ -41,13 +41,6 @@ igt@xe_compute@eu-busy-10s
 ##################################################################
 igt@xe_vm@.*export.*
 ##################################################################
-# Tests not applicable for the platform
-##################################################################
-igt@xe_exec_multi_queue@.*
-igt@xe_evict@.*multi(-)?queue.*
-igt@.*@.*-multi_queue
-igt@.*@.*multi-queue.*
-##################################################################
 # Expected skips, Kernel support not available
 ##################################################################
 igt@xe_eudebug_sriov@deny-sriov
@@ -98,4 +91,9 @@ igt@xe_compute@ccs-mode-compute-kernel
 ##################################################################
 igt@xe_mempage_offline@inject-single-page
 igt@xe_mempage_offline@inject-duplicate-page
+##################################################################
+# Expected skip on BMG due to unsupported multi-queue capability
+# Multi-queue is not supported on platforms older than xe3p
+##################################################################
+igt@.*multi.queue.*
 ##################################################################
